@@ -1,0 +1,7 @@
+*.mp4
+*.json
+*.pth
+*.avi
+.vscode
+deeplearning
+__pycache__

@@ -1,0 +1,1 @@
+Install custom remote env gym package with pip install -e remote-env, create install with gym.make('remote_env:remote-car-v0')
