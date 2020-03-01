@@ -64,9 +64,7 @@ def moveServo1(angle):
         bus.write_i2c_block_data(9, 0, finalCommandBytes)
         bus.read_i2c_block_data(9, 0, 2)
         
-def wheel1(percent, direction = "FORWRD"):
-
-    
+def wheel1(percent, direction = "FORWARD"):
 
     commandBits = 0x4
     dataBits = angle
