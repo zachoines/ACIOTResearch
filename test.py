@@ -14,6 +14,26 @@ import serial
 
 INTERRUPT_PIN = 7
 
+# typedef struct {
+#   int16_t accel_offset_x; /**< x acceleration offset */
+#   int16_t accel_offset_y; /**< y acceleration offset */
+#   int16_t accel_offset_z; /**< z acceleration offset */
+
+#   int16_t mag_offset_x; /**< x magnetometer offset */
+#   int16_t mag_offset_y; /**< y magnetometer offset */
+#   int16_t mag_offset_z; /**< z magnetometer offset */
+
+#   int16_t gyro_offset_x; /**< x gyroscrope offset */
+#   int16_t gyro_offset_y; /**< y gyroscrope offset */
+#   int16_t gyro_offset_z; /**< z gyroscrope offset */
+
+#   int16_t accel_radius; /**< acceleration radius */
+
+#   int16_t mag_radius; /**< magnetometer radius */
+# } adafruit_bno055_offsets_t;
+
+# Open i2c bus 1 and read one byte from address 80, offset 0
+
 
 def toFloat(byteArray):
     data_bytes = np.array(byteArray, dtype=np.uint8)
@@ -53,7 +73,8 @@ def getLinearAccelData():
         bus.write_i2c_block_data(9, 0, finalCommandBytes)
         bytes_array = bus.read_i2c_block_data(9, 0, 24)
         xBytes, yBytes, zBytes = np.array_split(bytes_array, 3)
-        linearAccelData = [toDouble(xBytes), toDouble(yBytes), toDouble(zBytes)]       
+        linearAccelData = [toDouble(xBytes), toDouble(yBytes), toDouble(zBytes)]
+        print(linearAccelData)
         return linearAccelData
 
 
@@ -74,6 +95,9 @@ def getSonicSensorReadings():
         distance1bytes, distance2bytes = split_list(bytes_array) 
         distance_one = toFloat(distance1bytes)
         distance_two = toFloat(distance2bytes)
+
+        print(distance_one)
+        print(distance_two)
 
         return distance_one, distance_two
 
@@ -180,35 +204,40 @@ def testServos():
         time.sleep(.1)
 
 
+def sendCommand():
+    pass
+
+
+def receiveResponse():
+    pass
+
+
 # Serial communication with EPU
 def parseEPUData(data):
     # float distance_to_obstacle[2]
     # double acceleration[3]
     # unsigned short distance_to_target
     # unsigned long timestamp
-    # 4 8 2 4
     print(data)
-    distanceOne = toFloat(data[0:4])
-    distanceTwo = toFloat(data[4:8])
-    linearAccelX = data[9:17]
-    linearAccelY = toDouble(data[18:26])
-    linearAccelZ = toDouble(data[27:35])
-    distanceToTarget = data[36:38]
-    timestamp = data[39:40]
-
-
 
 
 def readSensorDataUART(serial_port):
     receivedBytes = []
     newData = False
-    numBytes = 38
+    numBytes = 40
     recvInProgress = False
     ndx = 0
+    startMarker = 0x3C
+    endMarker = 0x3E
+    command = 0x41
     rb = 0
 
+    # GPIO.output(INTERRUPT_PIN, GPIO.LOW)
+
+    message = [startMarker, command, endMarker]
+
     # for byte in message:
-    serial_port.write('<A>'.encode('ascii'))
+    serial_port.write(0x3C413E)
 
     while not newData:
         if serial_port.inWaiting() > 0:
@@ -216,8 +245,8 @@ def readSensorDataUART(serial_port):
             rb = serial_port.read()
 
             if recvInProgress:
-                if ord(rb) != endMarker:
-                    receivedBytes.append(ord(rb))
+                if rb != endMarker:
+                    receivedBytes.append(rb)
                     ndx += 1
                     if ndx >= numBytes:
                         ndx = numBytes - 1
@@ -227,7 +256,7 @@ def readSensorDataUART(serial_port):
                     ndx = 0
                     newData = True
 
-            elif ord(rb) == startMarker:
+            elif rb == startMarker:
                 recvInProgress = True
 
     if newData:
@@ -237,6 +266,7 @@ def readSensorDataUART(serial_port):
 
     # GPIO.output(INTERRUPT_PIN, GPIO.HIGH)
 
+
 def testUARTSlave():
     serial_port = serial.Serial(
         port="/dev/ttyTHS1",
@@ -245,6 +275,9 @@ def testUARTSlave():
         parity=serial.PARITY_NONE,
         stopbits=serial.STOPBITS_ONE,
     )
+
+    #serial_port.close()
+    #serial_port.open()
 
     try:
         for _ in range(1000):
@@ -276,15 +309,14 @@ def main():
 
 
 if __name__ == '__main__':
-    # GPIO.setmode(GPIO.BOARD)
-    # GPIO.setup(INTERRUPT_PIN, GPIO.OUT, initial=GPIO.HIGH)
+    GPIO.setmode(GPIO.BOARD)
+    GPIO.setup(INTERRUPT_PIN, GPIO.OUT, initial=GPIO.HIGH)
 
     # testWheels()
     # testAccelSensors()
     testUARTSlave()
-    # UART_Test()
     # testSonicSensors()
     # testServos()
     # main()
 
-    # GPIO.cleanup()
+    GPIO.cleanup()
