@@ -30,6 +30,11 @@ def toInt16(byteArray):
     return data_bytes.view(dtype=np.int16)
 
 
+def toLong(byteArray):
+    data_bytes = np.array(byteArray, dtype=np.long)
+    return data_bytes.view(dtype=np.long)
+
+
 def reverseList(lst):
     return [ele for ele in reversed(lst)]
 
@@ -187,14 +192,15 @@ def parseEPUData(data):
     # unsigned short distance_to_target
     # unsigned long timestamp
     # 4 8 2 4
-    print(data)
+    
     distanceOne = toFloat(data[0:4])
     distanceTwo = toFloat(data[4:8])
-    linearAccelX = data[9:17]
-    linearAccelY = toDouble(data[18:26])
-    linearAccelZ = toDouble(data[27:35])
-    distanceToTarget = data[36:38]
-    timestamp = data[39:40]
+    linearAccelX = toDouble(data[8:16])
+    linearAccelY = toDouble(data[16:24])
+    linearAccelZ = toDouble(data[24:32])
+    distanceToTarget = toInt16(data[32:34])
+    timestamp = toLong(data[34:40])
+    return [distanceOne, distanceTwo, linearAccelX, linearAccelY, linearAccelZ, distanceToTarget, timestamp]
 
 
 
@@ -202,9 +208,12 @@ def parseEPUData(data):
 def readSensorDataUART(serial_port):
     receivedBytes = []
     newData = False
-    numBytes = 38
+    numBytes = 40
     recvInProgress = False
     ndx = 0
+    startMarker = 0x3C
+    endMarker = 0x3E
+    command = 0x41
     rb = 0
 
     # for byte in message:
