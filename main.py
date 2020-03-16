@@ -4,13 +4,15 @@
 # from PPO2.Train import Train
 # from PPO2.Test import Test
 # from PPO2.Config import config_pacman as config
-
+import os
 from smbus2 import SMBus
 import Jetson.GPIO as GPIO
 import numpy as np
 # import tensorflow as tf
 import time
 import serial
+
+from EPU import EnvironmentalProcessingAndActuationUnit
 
 INTERRUPT_PIN = 7
 
@@ -271,7 +273,8 @@ def testUARTSlave():
 
 
 def main():
-    pass
+    epu = EPU()
+
 
 
 # def PPO_Start():
@@ -290,10 +293,11 @@ if __name__ == '__main__':
 
     # testWheels()
     # testAccelSensors()
-    testUARTSlave()
+    # login()
+    # testUARTSlave()
     # UART_Test()
     # testSonicSensors()
     # testServos()
-    # main()
+    main()
 
     # GPIO.cleanup()

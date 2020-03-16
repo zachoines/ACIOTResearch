@@ -1,14 +1,13 @@
 from smbus2 import SMBus
 import Jetson.GPIO as GPIO
 import numpy as np
-# import tensorflow as tf
-import time
 import serial
 
-class EPU(object):
-    
-    def __init__(self, i2c_address==0x9):
-        self.__i2c_address = i2c_addres
+
+class EnvironmentalProcessingAndActuationUnit(object):
+
+    def __init__(self, i2c_address=0x9):
+        self.__i2c_address = i2c_address
         self.__serial_port = serial.Serial(
             port="/dev/ttyTHS1",
             baudrate=9600,
@@ -24,30 +23,24 @@ class EPU(object):
         data_bytes = np.array(byteArray, dtype=np.uint8)
         return data_bytes.view(dtype=np.float32)
 
-
     def __toDouble(self, byteArray):
         data_bytes = np.array(byteArray, dtype=np.uint8)
         return data_bytes.view(dtype=np.float64)
-
 
     def __toInt16(self, byteArray):
         data_bytes = np.array(byteArray, dtype=np.uint8)
         return data_bytes.view(dtype=np.int16)
 
-
     def __toLong(self, byteArray):
         data_bytes = np.array(byteArray, dtype=np.long)
         return data_bytes.view(dtype=np.long)
 
-
     def __reverseList(self, lst):
         return [ele for ele in reversed(lst)]
-
 
     def __split_list(self, a_list):
         half = len(a_list)//2
         return a_list[:half], a_list[half:]
-
 
     def getLinearAccelData(self):
         commandBits = 0x7
@@ -65,7 +58,6 @@ class EPU(object):
             xBytes, yBytes, zBytes = np.array_split(bytes_array, 3)
             linearAccelData = [self.__toDouble(xBytes), self.__toDouble(yBytes), self.__toDouble(zBytes)]       
             return linearAccelData
-
 
     def getSonicSensorReadings(self):
         commandBits = 0x4
@@ -88,6 +80,19 @@ class EPU(object):
             return [distance_one, distance_two]
 
 
+    def resetServos(self):
+        commandBits = 0x8
+        dataBits = 0xFF
+        finalCommand = (commandBits << 8) + dataBits
+        finalCommand &= 0xFFFF
+
+        with SMBus(1) as bus:
+            structBytes = finalCommand.to_bytes(2, byteorder="big", signed=False)
+            commandByteArray = bytearray(structBytes)
+            finalCommandBytes = list(commandByteArray)
+            bus.write_i2c_block_data(self.__i2c_address, 0, finalCommandBytes)
+            bus.read_i2c_block_data(self.__i2c_address, 0, 2)
+
     def moveServo1(self, angle):
         commandBits = 0x2
         dataBits = angle
@@ -102,8 +107,27 @@ class EPU(object):
             finalCommandBytes = list(commandByteArray)
             bus.write_i2c_block_data(self.__i2c_address, 0, finalCommandBytes)
             bus.read_i2c_block_data(self.__i2c_address, 0, 2)
-        
+    
+    def moveServo2(self, angle):
+        commandBits = 0x3
+        dataBits = angle
+        dataBits &= 0xFF
+        finalCommand = (commandBits << 8) + dataBits
+        finalCommand &= 0xFFFF
 
+        with SMBus(1) as bus:
+            structBytes = finalCommand.to_bytes(2, byteorder="big", signed=False)
+            commandByteArray = bytearray(structBytes)
+            finalCommandList = list(commandByteArray)
+            bus.write_i2c_block_data(self.__i2c_address, 0, finalCommandList)
+            bus.read_i2c_block_data(self.__i2c_address, 0, 2)
+
+    def pan(self, angle):
+        self.moveServo1(angle)
+
+    def tilt(self, angle):
+        self.moveServo2(angle)
+      
     def setWheelSpeeds(self, ws1, ws2):
 
         with SMBus(1) as bus:
@@ -131,22 +155,6 @@ class EPU(object):
             finalCommandList = list(commandByteArray)
             bus.write_i2c_block_data(self.__i2c_address, 0, finalCommandList)
             bus.read_i2c_block_data(self.__i2c_address, 0, 2)
-
-
-    def moveServo2(self, angle):
-        commandBits = 0x3
-        dataBits = angle
-        dataBits &= 0xFF
-        finalCommand = (commandBits << 8) + dataBits
-        finalCommand &= 0xFFFF
-
-        with SMBus(1) as bus:
-            structBytes = finalCommand.to_bytes(2, byteorder="big", signed=False)
-            commandByteArray = bytearray(structBytes)
-            finalCommandList = list(commandByteArray)
-            bus.write_i2c_block_data(self.__i2c_address, 0, finalCommandList)
-            bus.read_i2c_block_data(self.__i2c_address, 0, 2)
-
 
     # Serial communication with EPU
     def __parseEPUData(self, data):
@@ -202,14 +210,6 @@ class EPU(object):
             else:
                 return [None, None, None, None, None, None, None]
 
-
         except Exception as exception_error:
             print("Error occurred. Exiting Program")
             print("Error: " + str(exception_error))
-
-
-
-
-        
-
-        

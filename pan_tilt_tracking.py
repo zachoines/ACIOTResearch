@@ -1,172 +1,205 @@
-# USAGE
-# python pan_tilt_tracking.py --cascade haarcascade_frontalface_default.xml
-
-# import necessary packages
-from multiprocessing import Manager
-from multiprocessing import Process
-from imutils.video import VideoStream
-from pyimagesearch.objcenter import ObjCenter
-from pyimagesearch.pid import PID
-import pantilthat as pth
-import argparse
-import signal
+import threading
+from TargetDetectAndTrack.objcenter import ObjCenter
+from TargetDetectAndTrack.pid import PID
 import time
-import sys
-import ls
+import cv2
+from Hardware import EnvironmentalProcessingAndActuationUnit as EPAU
 
-# define the range for the motors
+# Init our connection arduino system with its sensors and actuators
+epau = EPAU()
+# servoRange = (15, 175)
 servoRange = (-90, 90)
+lock = threading.Lock()
 
-# function to handle keyboard interrupt
-def signal_handler(sig, frame):
-	# print a status messagepip
-	print("[INFO] You pressed `ctrl + c`! Exiting...")
 
-	# disable the servos
-	pth.servo_enable(1, False)
-	pth.servo_enable(2, False)
+def gstreamer_pipeline(
+    capture_width=1280,
+    capture_height=720,
+    display_width=1280,
+    display_height=720,
+    framerate=60,
+    flip_method=0,
+):
+    return (
+        "nvarguscamerasrc ! "
+        "video/x-raw(memory:NVMM), "
+        "width=(int)%d, height=(int)%d, "
+        "format=(string)NV12, framerate=(fraction)%d/1 ! "
+        "nvvidconv flip-method=%d ! "
+        "video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=(string)BGR ! appsink"
+        % (
+            capture_width,
+            capture_height,
+            framerate,
+            flip_method,
+            display_width,
+            display_height,
+        )
+    )
 
-	# exit
-	sys.exit()
 
-def obj_center(args, objX, objY, centerX, centerY):
-	# signal trap to handle keyboard interrupt
-	signal.signal(signal.SIGINT, signal_handler)
+def map(x, in_min, in_max, out_min, out_max):
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 
-	# start the video stream and wait for the camera to warm up
-	vs = VideoStream(usePiCamera=True).start()
-	time.sleep(2.0)
+def obj_center():
+    time.sleep(2.0)
 
-	# initialize the object center finder
-	obj = ObjCenter(args["cascade"])
+    currentTries = 0
+    maxAttempts = 10
 
-	# loop indefinitely
-	while True:
-		# grab the frame from the threaded video stream and flip it
-		# vertically (since our camera was upside down)
-		frame = vs.read()
-		frame = cv2.flip(frame, 0)
+    # initialize the object center finder
+    obj = ObjCenter()
+    cap = cv2.VideoCapture(gstreamer_pipeline(), cv2.CAP_GSTREAMER)
 
-		# calculate the center of the frame as this is where we will
-		# try to keep the object
-		(H, W) = frame.shape[:2]
-		centerX.value = W // 2
-		centerY.value = H // 2
+    global isRunning
+    global centerX
+    global centerY
+    global objY
+    global objX
 
-		# find the object's location
-		objectLoc = obj.update(frame, (centerX.value, centerY.value))
-		((objX.value, objY.value), rect) = objectLoc
+    while isRunning:
+        if cap.isOpened():
+            ret, frame = cap.read()
 
-		# extract the bounding box and draw it
-		if rect is not None:
-			(x, y, w, h) = rect
-			cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0),
-				2)
+            if not ret:
+                time.sleep(1)
+                continue
+            
+            (H, W) = frame.shape[:2]
+            centerX = x = W // 2
+            centerY = y = H // 2
 
-		# display the frame to the screen
-		cv2.imshow("Pan-Tilt Face Tracking", frame)
-		cv2.waitKey(1)
+            objectLoc = obj.update(frame, (x, y))
+            ((x, y), rect) = objectLoc
 
-def pid_process(output, p, i, d, objCoord, centerCoord):
-	# signal trap to handle keyboard interrupt
-	signal.signal(signal.SIGINT, signal_handler)
+            # if rect is None:
+                
+            #     currentTries += 1
+            #     if currentTries >= maxAttempts:
+            #         currentTries = 0
+            #         epau.resetServos() 
+            #         print("No face found.")       
 
-	# create a PID and initialize it
-	p = PID(p.value, i.value, d.value)
-	p.initialize()
+            objY = y
+            objX = x
+            
+    cap.release()
 
-	# loop indefinitely
-	while True:
-		# calculate the error
-		error = centerCoord.value - objCoord.value
+def tilt_thread(p, i, d):
 
-		# update the value
-		output.value = p.update(error)
+    # create a PID and initialize it
+    p = PID(p, i, d)
+    p.initialize()
+
+    global isRunning
+    global centerY
+    global objY
+
+    # loop indefinitely
+    while isRunning:
+
+        lock.acquire()
+
+        try:
+
+            # calculate the error
+            center_coord = centerY
+            object_coord = objY
+            # error = (center_coord - object_coord)**2 / 2.0
+            error = center_coord - object_coord
+            # error = map(error, 0, (720 // 2), 0.0, 1.0)
+            tltAngle = p.update(error)
+
+            if in_range(tltAngle, servoRange[0], servoRange[1]):
+                tltAngle = map(tltAngle, -90, 90, 0, 180)
+                epau.tilt(int(tltAngle))
+                print("Tilt angle: " + str(tltAngle))
+
+        finally:
+            lock.release()
+            
+            
+
+def pan_thread(p, i, d):
+
+    # create a PID and initialize it
+    p = PID(p, i, d)
+    p.initialize()
+
+    global isRunning
+    global centerX
+    global objX
+
+    while isRunning:
+        
+        # calculate the error
+        lock.acquire()
+
+        try:
+
+            object_coord = objX
+            center_coord = centerX
+            # error = (center_coord - object_coord)**2 / 2.0
+            error = center_coord - object_coord
+            # error = map(error, 0, (1280 // 2), 0.0, 1.0)
+            panAngle = p.update(error)
+ 
+            if in_range(panAngle, servoRange[0], servoRange[1]):
+                panAngle = map(panAngle, -90, 90, 0, 180)
+                epau.pan(int(panAngle))
+                print("Pan angle: " + str(panAngle))
+
+        finally:
+                lock.release()
+            
 
 def in_range(val, start, end):
-	# determine the input vale is in the supplied range
-	return (val >= start and val <= end)
-
-def set_servos(pan, tlt):
-	# signal trap to handle keyboard interrupt
-	signal.signal(signal.SIGINT, signal_handler)
-
-	# loop indefinitely
-	while True:
-		# the pan and tilt angles are reversed
-		panAngle = -1 * pan.value
-		tltAngle = -1 * tlt.value
-
-		# if the pan angle is within the range, pan
-		if in_range(panAngle, servoRange[0], servoRange[1]):
-			pth.pan(panAngle)
-
-		# if the tilt angle is within the range, tilt
-		if in_range(tltAngle, servoRange[0], servoRange[1]):
-			pth.tilt(tltAngle)
+    return (val >= start and val <= end)
 
 # check to see if this is the main body of execution
 if __name__ == "__main__":
-	# construct the argument parser and parse the arguments
-	ap = argparse.ArgumentParser()
-	ap.add_argument("-c", "--cascade", type=str, required=True,
-		help="path to input Haar cascade for face detection")
-	args = vars(ap.parse_args())
 
-	# start a manager for managing process-safe variables
-	with Manager() as manager:
-		# enable the servos
-		pth.servo_enable(1, True)
-		pth.servo_enable(2, True)
+    epau.resetServos()
 
-		# set integer values for the object center (x, y)-coordinates
-		centerX = manager.Value("i", 0)
-		centerY = manager.Value("i", 0)
+    isRunning = 1
 
-		# set integer values for the object's (x, y)-coordinates
-		objX = manager.Value("i", 0)
-		objY = manager.Value("i", 0)
+    # Object center coordinates
+    centerX = 0
+    centerY = 0
 
-		# pan and tilt values will be managed by independed PIDs
-		pan = manager.Value("i", 0)
-		tlt = manager.Value("i", 0)
+    # Object coordinates
+    objX = 0
+    objY = 0
 
-		# set PID values for panning
-		panP = manager.Value("f", 0.09)
-		panI = manager.Value("f", 0.08)
-		panD = manager.Value("f", 0.002)
+    # Pan/Tilt angles
+    pan = 0
+    tlt = 0
 
-		# set PID values for tilting
-		tiltP = manager.Value("f", 0.11)
-		tiltI = manager.Value("f", 0.10)
-		tiltD = manager.Value("f", 0.002)
+    # Pan PID
+    panP = 0.09
+    panI = 0.08
+    panD = 0.002
 
-		# we have 4 independent processes
-		# 1. objectCenter  - finds/localizes the object
-		# 2. panning       - PID control loop determines panning angle
-		# 3. tilting       - PID control loop determines tilting angle
-		# 4. setServos     - drives the servos to proper angles based
-		#                    on PID feedback to keep object in center
-		processObjectCenter = Process(target=obj_center,
-			args=(args, objX, objY, centerX, centerY))
-		processPanning = Process(target=pid_process,
-			args=(pan, panP, panI, panD, objX, centerX))
-		processTilting = Process(target=pid_process,
-			args=(tlt, tiltP, tiltI, tiltD, objY, centerY))
-		processSetServos = Process(target=set_servos, args=(pan, tlt))
+    # Tilt PID
+    tiltP = 0.0
+    tiltI = 0.0
+    tiltD = 0.0
 
-		# start all 4 processes
-		processObjectCenter.start()
-		processPanning.start()
-		processTilting.start()
-		processSetServos.start()
+    # Init processes
+    ObjectCenterThread = threading.Thread(target=obj_center, args=())
+    # PanningThread = threading.Thread(target=pan_thread, args=(panP, panI, panD))
+    TiltingThread = threading.Thread(target=tilt_thread, args=(tiltP, tiltI, tiltD))
 
-		# join all 4 processes
-		processObjectCenter.join()
-		processPanning.join()
-		processTilting.join()
-		processSetServos.join()
+    # Start processes
+    ObjectCenterThread.start()
+    # PanningThread.start()
+    TiltingThread.start()
 
-		# disable the servos
-		pth.servo_enable(1, False)
-		pth.servo_enable(2, False)
+    # jobs = [ObjectCenterThread, PanningThread, TiltingThread]
+    jobs = [ObjectCenterThread, TiltingThread]
+    # jobs = [ObjectCenterThread, PanningThread]
+
+    for job in jobs:
+        job.join()
