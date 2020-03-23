@@ -1,14 +1,15 @@
 import threading
-from TargetDetectAndTrack.objcenter import ObjCenter
+from TargetDetectAndTrack.ObjectDetector import CascadeDetector
 from TargetDetectAndTrack.pid import PID
 import time
 import cv2
 from Hardware import EnvironmentalProcessingAndActuationUnit as EPAU
+import random
 
 # Init our connection arduino system with its sensors and actuators
 epau = EPAU()
-# servoRange = (15, 175)
-servoRange = (-90, 90)
+servo1Range = (-45, 45)
+servo2Range = (-22.5, 22.5)
 lock = threading.Lock()
 
 
@@ -43,14 +44,13 @@ def gstreamer_pipeline(
 def map(x, in_min, in_max, out_min, out_max):
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 
-def obj_center():
-    time.sleep(2.0)
+def detecter_thread():
 
     currentTries = 0
-    maxAttempts = 10
+    maxAttempts = 5
 
     # initialize the object center finder
-    obj = ObjCenter()
+    cd = CascadeDetector()
     cap = cv2.VideoCapture(gstreamer_pipeline(), cv2.CAP_GSTREAMER)
 
     global isRunning
@@ -64,95 +64,84 @@ def obj_center():
             ret, frame = cap.read()
 
             if not ret:
-                time.sleep(1)
                 continue
+
+            lock.acquire()
+            try:
             
-            (H, W) = frame.shape[:2]
-            centerX = x = W // 2
-            centerY = y = H // 2
+                (H, W) = frame.shape[:2]
+                centerX = x = W // 2
+                centerY = y = H // 2
 
-            objectLoc = obj.update(frame, (x, y))
-            ((x, y), rect) = objectLoc
+                objectLoc = cd.detect(frame, (x, y))
+                ((x, y), rect) = objectLoc
 
-            # if rect is None:
-                
-            #     currentTries += 1
-            #     if currentTries >= maxAttempts:
-            #         currentTries = 0
-            #         epau.resetServos() 
-            #         print("No face found.")       
+                objY = y
+                objX = x
 
-            objY = y
-            objX = x
+                if rect is None:
+                    currentTries += 1
+                    if currentTries >= maxAttempts:
+                        currentTries = 0
+                        # epau.resetServos() 
+            finally:
+                lock.release()
+                time.sleep(random.random())
+
             
     cap.release()
 
-def tilt_thread(p, i, d):
+def pan_tilt_thread(pt, it, dt, pp, ip, dp):
 
-    # create a PID and initialize it
-    p = PID(p, i, d)
-    p.initialize()
+    # Create a PID's and initialize
+    p_pan = PID(pp, ip, dp)
+    p_pan.initialize()
+    p_tilt = PID(pt, it, dt)
+    p_tilt.initialize()
 
     global isRunning
+
     global centerY
     global objY
+    global tltAngle
+
+    global centerX
+    global objX
+    global panAngle
 
     # loop indefinitely
     while isRunning:
-
         lock.acquire()
-
         try:
-
-            # calculate the error
-            center_coord = centerY
-            object_coord = objY
-            # error = (center_coord - object_coord)**2 / 2.0
-            error = center_coord - object_coord
-            # error = map(error, 0, (720 // 2), 0.0, 1.0)
-            tltAngle = p.update(error)
-
-            if in_range(tltAngle, servoRange[0], servoRange[1]):
-                tltAngle = map(tltAngle, -90, 90, 0, 180)
-                epau.tilt(int(tltAngle))
-                print("Tilt angle: " + str(tltAngle))
-
+            tlt_error = centerY - objY
+            pan_error = centerX - objX
+            tltAngle = p_tilt.update(tlt_error) 
+            panAngle = p_pan.update(pan_error)
         finally:
             lock.release()
-            
-            
+            time.sleep(random.random())
 
-def pan_thread(p, i, d):
-
-    # create a PID and initialize it
-    p = PID(p, i, d)
-    p.initialize()
-
+def servo_thread():
     global isRunning
-    global centerX
-    global objX
+    global tltAngle
+    global panAngle
 
     while isRunning:
-        
+            
         # calculate the error
         lock.acquire()
 
         try:
+            # if in_range(panAngle, servo1Range[0], servo1Range[1]):
+            #     epau.pan(int(map(panAngle, servo1Range[0], servo1Range[1], 45, 135)))
 
-            object_coord = objX
-            center_coord = centerX
-            # error = (center_coord - object_coord)**2 / 2.0
-            error = center_coord - object_coord
-            # error = map(error, 0, (1280 // 2), 0.0, 1.0)
-            panAngle = p.update(error)
- 
-            if in_range(panAngle, servoRange[0], servoRange[1]):
-                panAngle = map(panAngle, -90, 90, 0, 180)
-                epau.pan(int(panAngle))
-                print("Pan angle: " + str(panAngle))
+            if in_range(tltAngle, servo2Range[0], servo2Range[1]):
+                epau.tilt(int(map(tltAngle, servo2Range[0], servo2Range[1], 0, 45)))
 
         finally:
-                lock.release()
+            lock.release()
+            time.sleep(random.random())
+            
             
 
 def in_range(val, start, end):
@@ -164,6 +153,8 @@ if __name__ == "__main__":
     epau.resetServos()
 
     isRunning = 1
+    tltAngle = -90
+    panAngle = -90
 
     # Object center coordinates
     centerX = 0
@@ -177,29 +168,38 @@ if __name__ == "__main__":
     pan = 0
     tlt = 0
 
+    # # Pan PID
+    # panP = 0.09
+    # panI = 0.08
+    # panD = 0.002
+
+    # # Tilt PID
+    # tiltP = 0.1
+    # tiltI = 0.10
+    # tiltD = 0.002
+
     # Pan PID
     panP = 0.09
     panI = 0.08
-    panD = 0.002
+    panD = 0.01
 
     # Tilt PID
-    tiltP = 0.0
-    tiltI = 0.0
-    tiltD = 0.0
+    tiltP = 0.02
+    tiltI = 0.01
+    tiltD = 0.007
 
     # Init processes
-    ObjectCenterThread = threading.Thread(target=obj_center, args=())
-    # PanningThread = threading.Thread(target=pan_thread, args=(panP, panI, panD))
-    TiltingThread = threading.Thread(target=tilt_thread, args=(tiltP, tiltI, tiltD))
+    ObjectCenterThread = threading.Thread(target=detecter_thread, args=())
+    ServoThread = threading.Thread(target=servo_thread, args=())
+    PanTiltThread = threading.Thread(target=pan_tilt_thread, args=(tiltP, tiltI, tiltD, panP, panI, panD))
 
-    # Start processes
-    ObjectCenterThread.start()
-    # PanningThread.start()
-    TiltingThread.start()
+    jobs = [ObjectCenterThread, PanTiltThread, ServoThread]
 
-    # jobs = [ObjectCenterThread, PanningThread, TiltingThread]
-    jobs = [ObjectCenterThread, TiltingThread]
-    # jobs = [ObjectCenterThread, PanningThread]
+    for job in jobs:
+        job.start()
 
     for job in jobs:
         job.join()
+
+
+
