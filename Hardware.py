@@ -6,8 +6,10 @@ import serial
 
 class EnvironmentalProcessingAndActuationUnit(object):
 
-    def __init__(self, i2c_address=0x9):
+    def __init__(self, i2c_address=0x9, servo_1_default=0x5A, servo_2_default=0x5A):
         self.__i2c_address = i2c_address
+        self.__servo_1_default = servo_1_default
+        self.__servo_2_default = servo_2_default
         self.__serial_port = serial.Serial(
             port="/dev/ttyTHS1",
             baudrate=9600,
@@ -79,8 +81,8 @@ class EnvironmentalProcessingAndActuationUnit(object):
 
             return [distance_one, distance_two]
 
-
-    def resetServos(self):
+    # Call the hardware level EPUA reset command
+    def __reset(self):
         commandBits = 0x8
         dataBits = 0xFF
         finalCommand = (commandBits << 8) + dataBits
@@ -92,6 +94,10 @@ class EnvironmentalProcessingAndActuationUnit(object):
             finalCommandBytes = list(commandByteArray)
             bus.write_i2c_block_data(self.__i2c_address, 0, finalCommandBytes)
             bus.read_i2c_block_data(self.__i2c_address, 0, 2)
+
+    def resetServos(self):
+        self.moveServo1(self.__servo_1_default)
+        self.moveServo2(self.__servo_2_default)
 
     def moveServo1(self, angle):
         commandBits = 0x2
