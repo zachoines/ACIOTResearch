@@ -3,22 +3,26 @@ from TargetDetectAndTrack.ObjectDetector import CascadeDetector
 from TargetDetectAndTrack.pid import PID
 import time
 import cv2
+import numpy as np
 from Hardware import EnvironmentalProcessingAndActuationUnit as EPAU
 
 # Init our connection arduino system with its sensors and actuators
 epau = None
 servo1Range = (-65, 65)
 servo2Range = (-65, 65)
-lock = threading.Lock()
+# lock = threading.Lock()
 
+# Frame dimentions
+frame_width=3264
+frame_height=2464
 
 def gstreamer_pipeline(
-    capture_width=1280,
-    capture_height=720,
+    capture_width=frame_width,
+    capture_height=frame_height,
     display_width=1280,
     display_height=720,
-    framerate=60,
-    flip_method=0,
+    framerate=10,
+    flip_method=6,
 ):
     return (
         "nvarguscamerasrc ! "
@@ -38,118 +42,10 @@ def gstreamer_pipeline(
             display_height,
         )
     )
-
+      
 
 def map(x, in_min, in_max, out_min, out_max):
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
-
-
-def detecter_thread():
-    currentTries = 0
-    maxAttempts = 5
-
-    # initialize the object center finder
-    cd = CascadeDetector()
-    cap = cv2.VideoCapture(gstreamer_pipeline(), cv2.CAP_GSTREAMER)
-
-    global isRunning
-    global centerX
-    global centerY
-    global objY
-    global objX
-
-    while isRunning:
-        if cap.isOpened():
-            ret, frame = cap.read()
-
-            if not ret:
-                continue
-
-            lock.acquire()
-        
-            try:
-                (H, W) = frame.shape[:2]
-                centerX = x = W // 2
-                centerY = y = H // 2
-
-                objectLoc = cd.detect(frame, (x, y))
-                ((x, y), rect) = objectLoc
-
-                objY = y
-                objX = x
-
-                if rect is None:
-                    currentTries += 1
-                    if currentTries >= maxAttempts:
-                        currentTries = 0
-                        # epau.resetServos() 
-            finally:
-                lock.release()
-                # time.sleep(random.random())
-     
-    cap.release()
-
-
-def pan_tilt_thread(pt, it, dt, pp, ip, dp):
-
-    # Create a PID's and initialize
-    p_pan = PID(pp, ip, dp)
-    p_pan.initialize()
-    p_tilt = PID(pt, it, dt)
-    p_tilt.initialize()
-
-    global isRunning
-
-    global centerY
-    global objY
-    global tltAngle
-
-    global centerX
-    global objX
-    global panAngle
-
-    # loop indefinitely
-    while isRunning:
-        lock.acquire()
-        try:
-            tlt_error = centerY - objY
-            pan_error = centerX - objX
-            tltAngle = p_tilt.update(tlt_error) 
-            panAngle = p_pan.update(pan_error)
-        finally:
-            lock.release()
-            # time.sleep(random.random())
-
-
-def servo_thread():
-    global isRunning
-    global tltAngle
-    global panAngle
-
-    while isRunning:       
-        # calculate the error
-        lock.acquire()
-
-        try:
-            if in_range(panAngle, servo1Range[0], servo1Range[1]):
-                epau.pan(int(map(panAngle, servo1Range[0], servo1Range[1], 45, 135)))
-
-            if in_range(tltAngle, servo2Range[0], servo2Range[1]):
-                epau.tilt(int(map(tltAngle, servo2Range[0], servo2Range[1], 0, 45)))
-
-        finally:
-            lock.release()
-            # time.sleep(random.random())       
-
-
-def servoTest(epau):
-    for i in range(-90, 90, 5):
-        j = int(map(i, servo1Range[0], servo1Range[1], 0, 180))
-        print("Current angle is: " + str(i))
-        epau.pan(j)
-        epau.tilt(j)
-        time.sleep(1)
-
 
 def in_range(val, start, end):
     return (val >= start and val <= end)
@@ -243,7 +139,7 @@ def single_threaded_tracking(showImage=True):
                 # Now determine error for tracking adustment
                 tlt_error = centerY - objY
                 pan_error = centerX - objX
-                tltAngle = p_tilt.update(tlt_error) 
+                tltAngle = p_tilt.update(tlt_error)
                 panAngle = p_pan.update(pan_error)
 
                 print("Here are the current angles. Pan: " + str(panAngle) + ", and Tilt: " + str(tltAngle))
@@ -268,12 +164,105 @@ def single_threaded_tracking(showImage=True):
                 except:
                     print("ERROR: Disconnected with EPU.")
                 finally:
-                    time.sleep(1)
-
-
+                    time.sleep(.2)
 
 
 def muilti_threaded_tracking():
+    def detecter_thread():
+        currentTries = 0
+        maxAttempts = 5
+
+        # initialize the object center finder
+        cd = CascadeDetector()
+        cap = cv2.VideoCapture(gstreamer_pipeline(), cv2.CAP_GSTREAMER)
+
+        global isRunning
+        global centerX
+        global centerY
+        global objY
+        global objX
+
+        while isRunning:
+            if cap.isOpened():
+                ret, frame = cap.read()
+
+                if not ret:
+                    continue
+
+                lock.acquire()
+            
+                try:
+                    (H, W) = frame.shape[:2]
+                    centerX = x = W // 2
+                    centerY = y = H // 2
+
+                    objectLoc = cd.detect(frame, (x, y))
+                    ((x, y), rect) = objectLoc
+
+                    objY = y
+                    objX = x
+
+                    if rect is None:
+                        currentTries += 1
+                        if currentTries >= maxAttempts:
+                            currentTries = 0
+                            # epau.resetServos() 
+                finally:
+                    lock.release()
+                    # time.sleep(random.random())
+        
+        cap.release()
+
+    def pan_tilt_thread(pt, it, dt, pp, ip, dp):
+
+        # Create a PID's and initialize
+        p_pan = PID(pp, ip, dp)
+        p_pan.initialize()
+        p_tilt = PID(pt, it, dt)
+        p_tilt.initialize()
+
+        global isRunning
+
+        global centerY
+        global objY
+        global tltAngle
+
+        global centerX
+        global objX
+        global panAngle
+
+        # loop indefinitely
+        while isRunning:
+            lock.acquire()
+            try:
+                tlt_error = centerY - objY
+                pan_error = centerX - objX
+                tltAngle = p_tilt.update(tlt_error) 
+                panAngle = p_pan.update(pan_error)
+            finally:
+                lock.release()
+                # time.sleep(random.random())
+
+    def servo_thread():
+        global isRunning
+        global tltAngle
+        global panAngle
+
+        while isRunning:       
+            # calculate the error
+            lock.acquire()
+
+            try:
+                if in_range(panAngle, servo1Range[0], servo1Range[1]):
+                    epau.pan(int(map(panAngle, servo1Range[0], servo1Range[1], 45, 135)))
+
+                if in_range(tltAngle, servo2Range[0], servo2Range[1]):
+                    epau.tilt(int(map(tltAngle, servo2Range[0], servo2Range[1], 0, 45)))
+
+            finally:
+                lock.release()
+                # time.sleep(random.random())       
+
     initialized = False
     try:
         epau = EPAU()
@@ -326,11 +315,69 @@ def muilti_threaded_tracking():
         job.join()
 
 
-
 def muilti_process_tracking(showImage=True):
     import multiprocessing
+    from multiprocessing import Lock, Array
+    import time
+    import random
+    import ctypes
 
-    def detecter_process(isRunning, centerX, centerY, objY, objX):
+    def camera_process(isRunning, frame):
+
+        cap = cv2.VideoCapture(gstreamer_pipeline(), cv2.CAP_GSTREAMER)
+
+        while isRunning.value:
+            try:
+                frame.acquire()
+                if cap.isOpened():
+                    ret, newFrame = cap.read()
+
+                    if not ret:
+                        continue
+                    else:
+                        np_frame = np.frombuffer(frame.get_obj(), dtype=ctypes.c_ubyte).reshape((720, 1280, 3))
+                        np.copyto(np_frame, newFrame)
+            finally:
+                frame.release()
+                        
+        cap.release() 
+
+    def object_detecter_process(isRunning, frame, centerX, centerY, objY, objX):
+        currentTries = 0
+        maxAttempts = 5
+
+        # initialize the object center finder
+        cd = CascadeDetector()
+
+        while isRunning.value:          
+            try:
+                frame.acquire()
+                centerX.value = x = frame_width // 2
+                centerY.value = y = frame_height // 2
+                np_frame = np.frombuffer(frame.get_obj(), dtype=ctypes.c_ubyte).reshape((720, 1280, 3))
+                objectLoc = cd.detect(np_frame, (x, y))
+                ((x, y), rect) = objectLoc
+
+                objY.value = y
+                objX.value = x
+                    
+                currentTries += 1
+                if currentTries >= maxAttempts:
+                    currentTries = 0
+                    # epau.resetServos() 
+
+                # Show to user
+                if showImage and rect is not None:
+                    (x, y, w, h) = rect
+                    cv2.rectangle(np_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    cv2.imshow("Pan-Tilt Face Tracking", np_frame)
+                    cv2.waitKey(1)          
+            finally:
+                frame.release()
+                        
+        cap.release()
+
+    def capture_and_detect_process(isRunning, centerX, centerY, objY, objX):
 
         currentTries = 0
         maxAttempts = 5
@@ -396,65 +443,85 @@ def muilti_process_tracking(showImage=True):
             finally:
                 pass
                 # time.sleep(random.random())
-
-
+                
     def servo_process(panAngle, tltAngle, isRunning):
+        lastPan = 0
+        lastTilt = 0
+
         while isRunning.value:
-
+            currentPan = panAngle.value
+            currentTilt = tltAngle.value
             try:
-                if in_range(panAngle.value, servo1Range[0], servo1Range[1]):
-                    epau.pan(int(map(panAngle.value, servo1Range[0], servo1Range[1], 25, 155)))
+                if currentPan != lastPan and in_range(currentPan, servo1Range[0], servo1Range[1]):
+                    lastPan = currentPan
+                    epau.pan(int(map(currentPan, servo1Range[0], servo1Range[1], 25, 155)))
 
-                if in_range(tltAngle.value, servo2Range[0], servo2Range[1]):
-                    epau.tilt(int(map(tltAngle.value, servo2Range[0], servo2Range[1], 25, 155)))
+                if currentTilt != lastTilt and in_range(currentTilt, servo2Range[0], servo2Range[1]):
+                    lastTilt = currentTilt
+                    epau.tilt(int(map(currentTilt, servo2Range[0], servo2Range[1], 25, 155)))
 
             finally:
-                pass
-                # time.sleep(random.random())      
+                time.sleep(.2)     
 
     manager = multiprocessing.Manager()
-
+    epau = None
     initialized = False
     try:
-        epau = EPAU()
+        # epau = EPAU()
         initialized = True
+        # epau.resetServos()
     except:
         print("ERROR: Issue initializing remote EPU.")
     finally:
         if not initialized:
             print("Exiting now...")
+            exit(1)
 
-    epau.resetServos()
-
+    # Init shared array in memory 
+    lock = Lock()
     isRunning = manager.Value('i', 1)
-
+    mockFrame = np.ones(shape=(720, 1280, 3), dtype=ctypes.c_ubyte)
+    frame = Array(ctypes.c_ubyte, (720 * 1280 * 3), lock=lock)
+    np_frame = np.frombuffer(frame.get_obj(), dtype=ctypes.c_ubyte).reshape((720, 1280, 3))
+    np.copyto(np_frame, mockFrame)
+    
     # Pan/Tilt angles
-    tltAngle = manager.Value('f', 0, lock=True)
-    panAngle = manager.Value('f', 90, lock=True)
+    tltAngle = manager.Value('f', 0, lock=False)
+    panAngle = manager.Value('f', 90, lock=False)
 
     # Object center coordinates
-    centerX = manager.Value('f', 0, lock=True)
-    centerY = manager.Value('f', 0, lock=True)
+    centerX = manager.Value('f', 0, lock=False)
+    centerY = manager.Value('f', 0, lock=False)
 
     # Object coordinates
-    objX = manager.Value('f', 0, lock=True)
-    objY = manager.Value('f', 0, lock=True)
+    objX = manager.Value('f', 0, lock=False)
+    objY = manager.Value('f', 0, lock=False)
 
     # Pan PID
-    panP = manager.Value('f', 0.02, lock=True) 
-    panI = manager.Value('f', 0.01, lock=True) 
-    panD = manager.Value('f', 0.007, lock=True)
+    panP = manager.Value('f', 0.02, lock=False) 
+    panI = manager.Value('f', 0.01, lock=False) 
+    panD = manager.Value('f', 0.007, lock=False)
 
     # Tilt PID
-    tiltP = manager.Value('f', 0.02, lock=True)
-    tiltI = manager.Value('f', 0.01, lock=True)
-    tiltD = manager.Value('f', 0.007, lock=True)
-
+    tiltP = manager.Value('f', 0.02, lock=False)
+    tiltI = manager.Value('f', 0.01, lock=False)
+    tiltD = manager.Value('f', 0.007, lock=False)
 
     # Init processes
-    ObjectCenterProcess = multiprocessing.Process(
-        target=detecter_process,
+
+    captureAndDetectProcess = multiprocessing.Process(
+        target=capture_and_detect_process,
         args=(isRunning, centerX, centerY, objY, objX)
+    )
+
+    CameraProcess = multiprocessing.Process(
+        target=camera_process,
+        args=(isRunning, frame)
+    )
+
+    ObjectDetectorProcess = multiprocessing.Process(
+        target=object_detecter_process,
+        args=(isRunning, frame, centerX, centerY, objY, objX)
     )
 
     ServoProcess = multiprocessing.Process(
@@ -467,7 +534,8 @@ def muilti_process_tracking(showImage=True):
         args=(panAngle, tltAngle, isRunning)
     )
 
-    jobs = [ObjectCenterProcess, PanTiltProcess, ServoProcess]
+    # jobs = [CameraProcess, ObjectDetectorProcess, PanTiltProcess]
+    jobs = [captureAndDetectProcess, PanTiltProcess]
 
     for job in jobs:
         job.start()
@@ -478,5 +546,5 @@ def muilti_process_tracking(showImage=True):
 
 # check to see if this is the main body of execution
 if __name__ == "__main__":
-    muilti_process_tracking()
+    muilti_process_tracking(showImage=False)
     # single_threaded_tracking()

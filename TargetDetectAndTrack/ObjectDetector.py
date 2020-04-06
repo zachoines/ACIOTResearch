@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod 
 import cv2
 import time
+import numpy as np
 
 class Detector(ABC):
     def detect(self):
@@ -16,13 +17,13 @@ class CascadeDetector(Detector):
 
 
     def detect(self, frame, frameCenter, sleep=0.0):
-        time.sleep(sleep)
+        # time.sleep(sleep)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = self.face_detector.detectMultiScale(gray, scaleFactor=1.05,
             minNeighbors=9, minSize=(30, 30),
             flags=cv2.CASCADE_SCALE_IMAGE)
 
-        faces = self.face_detector.detectMultiScale(gray, 1.3, 5)
+        # faces = self.face_detector.detectMultiScale(gray, 1.3, 5)
 
         # check to see if a face was found
         if len(faces) > 0:
@@ -30,21 +31,20 @@ class CascadeDetector(Detector):
             (x, y, w, h) = faces[0]
             faceX = int(x + (w / 2.0))
             faceY = int(y + (h / 2.0))
+            print("Found face")
 
             return ((faceX, faceY), faces[0])
 
             # eyes = self.eye_detector.detectMultiScale(gray[y:y+h, x:x+w])
 
             # if len(eyes) > 1:
-            #     # Could loop through the detected eyes
-            #     # for (ex,ey,ew,eh) in eyes:
             #     print("Found face")
             #     return ((faceX, faceY), faces[0])
             # else:
             #     print("ERROR: No face found!")
             #     return (frameCenter, None)
         else:
-            # print("ERROR: No face found!")
+            print("ERROR: No face found!")
             return (frameCenter, None)
 
         
